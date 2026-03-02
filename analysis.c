@@ -9,7 +9,7 @@
 
 static RankingMetric current_sort_metric = SORT_WORST_CASE;
 
-// --- Comparison functions (БЕЗ ЗМІН) ---
+// --- Comparison functions ---
 int compare_results(const void *a, const void *b) {
     const KmerAnalysisResult *ra = (const KmerAnalysisResult *)a;
     const KmerAnalysisResult *rb = (const KmerAnalysisResult *)b;
@@ -31,7 +31,7 @@ int compare_overlaps_desc(const void *a, const void *b) {
     return 0;
 }
 
-// --- process_kmers (БЕЗ ЗМІН) ---
+// --- process_kmers ---
 static void process_kmers(KmerTask *tasks, size_t num_tasks, int k, int limit_top_n, KmerAnalysisResult *results, GenomeMap *map) {
     char kmer_text[64];
     char match_text[64];
@@ -106,7 +106,7 @@ static void process_kmers(KmerTask *tasks, size_t num_tasks, int k, int limit_to
     qsort(results, num_tasks, sizeof(KmerAnalysisResult), compare_results);
 }
 
-// --- Output details for Rank #1 (БЕЗ ЗМІН) ---
+// --- Output details for Rank #1 ---
 static void append_rank1_details(char *buffer, size_t max_len, KmerTask *tasks, size_t num_tasks, int k, uint32_t rank1_id, int safe_mode, GenomeMap *map) {
     size_t offset = strlen(buffer);
     if (offset >= max_len) return;
@@ -135,7 +135,9 @@ static void append_rank1_details(char *buffer, size_t max_len, KmerTask *tasks, 
             GenomicLocation loc;
             if (map) loc = get_genomic_location(map, sorted_overlaps[i].position_in_genome);
             else { loc.global_idx = sorted_overlaps[i].position_in_genome; strcpy(loc.chrom_name, "N/A"); loc.local_idx = sorted_overlaps[i].position_in_genome; }
-            char loc_str[128]; snprintf(loc_str, sizeof(loc_str), "%s:%zu", loc.chrom_name, loc.local_idx);
+            
+            char m_strand = sorted_overlaps[i].is_minus_strand ? '-' : '+';
+            char loc_str[128]; snprintf(loc_str, sizeof(loc_str), "%s:%zu(%c)", loc.chrom_name, loc.local_idx, m_strand);
             snprintf(buffer + offset, max_len - offset, "%-5d %-24s %d/%d        %-20s\n", i+1, seq_buf, match_cnt, k, loc_str);
         } else {
              if (count == 0 && i == 0) snprintf(buffer + offset, max_len - offset, "(No significant overlaps found yet)\n");
@@ -145,7 +147,7 @@ static void append_rank1_details(char *buffer, size_t max_len, KmerTask *tasks, 
     }
 }
 
-// --- Interactive Report (UI) (БЕЗ ЗМІН) ---
+// --- Interactive Report (UI) ---
 void write_interactive_report(char *buffer, size_t max_len, KmerTask *tasks, size_t num_tasks, int k, RankingMetric metric, int show_details, int is_loading, GenomeMap *map) {
     KmerAnalysisResult *results = (KmerAnalysisResult*)malloc(sizeof(KmerAnalysisResult) * num_tasks);
     int safe_mode = (results == NULL);
@@ -193,7 +195,7 @@ void write_interactive_report(char *buffer, size_t max_len, KmerTask *tasks, siz
 }
 
 // =========================================================================================
-// UPDATED EXPORT FUNCTIONS (Added TargetHitInfo)
+// EXPORT FUNCTIONS 
 // =========================================================================================
 
 // --- 1. STANDARD CSV EXPORT ---
@@ -209,14 +211,12 @@ void analyze_and_rank(KmerTask *tasks, size_t num_tasks, int k, const char *outp
     if (!fp) { perror("Failed to open output file"); free(results); return; }
 
     fprintf(fp, "# Sorted by Metric: %d\n", metric);
-    // NEW HEADER COLUMNS
     fprintf(fp, "Rank,Target_Kmer_Index,Target_Chrom,Target_Abs_Start,Target_Abs_End,Target_Strand,Sequence_Raw,Sequence_Visual,GC_Content,Differences,Mean_Uniqueness,RMS_Score,Min_Pos_Uniqueness,Worst_Match_Sequence,Worst_Match_Genome_Pos,Worst_Match_Chromosome,Worst_Match_Local_Pos\n");
     
     for (size_t i = 0; i < num_tasks; i++) {
         int match_cnt = (int)(results[i].worst_case_score / 100.0 * k + 0.1);
         int diff_cnt = k - match_cnt;
         
-        // --- Calculate Target Coordinates ---
         char t_chrom[64] = "N/A";
         char t_strand[8] = "N/A";
         size_t t_start = 0;
@@ -226,14 +226,17 @@ void analyze_and_rank(KmerTask *tasks, size_t num_tasks, int k, const char *outp
             strncpy(t_chrom, target_info.chrom_name, 63); t_chrom[63]='\0';
             strncpy(t_strand, target_info.strand, 7); t_strand[7]='\0';
             
-            // Якщо Plus Strand: Start + kmer_idx
-            // Якщо Minus Strand: End - kmer_idx - k (для зворотнього напрямку)
-            // АЛЕ для спрощення ми завжди рахуємо від "Start" замаскованої ділянки.
-            t_start = target_info.local_start + results[i].original_id;
-            t_end = t_start + k - 1;
+            if (strcmp(target_info.strand, "MINUS") == 0) {
+                t_start = target_info.local_end - results[i].original_id - k + 1;
+                t_end   = target_info.local_end - results[i].original_id;
+            } else {
+                t_start = target_info.local_start + results[i].original_id;
+                t_end   = t_start + k - 1;
+            }
         }
 
         GenomicLocation loc;
+        char worst_strand = '+';
         if (map) {
              KmerTask *t = &tasks[results[i].original_id];
              int max_sim_idx = -1; float max_score = -1.0;
@@ -241,20 +244,22 @@ void analyze_and_rank(KmerTask *tasks, size_t num_tasks, int k, const char *outp
              if (count > MAX_TOP_RESULTS) count = MAX_TOP_RESULTS;
              
              for(int j=0; j<count; j++) { if(t->top_results[j].similarity_score > max_score) { max_score = t->top_results[j].similarity_score; max_sim_idx = j; } }
-             if(max_sim_idx != -1) loc = get_genomic_location(map, t->top_results[max_sim_idx].position_in_genome);
-             else { loc.global_idx = 0; strcpy(loc.chrom_name, "N/A"); loc.local_idx = 0; }
+             if(max_sim_idx != -1) {
+                 loc = get_genomic_location(map, t->top_results[max_sim_idx].position_in_genome);
+                 worst_strand = t->top_results[max_sim_idx].is_minus_strand ? '-' : '+';
+             } else { loc.global_idx = 0; strcpy(loc.chrom_name, "N/A"); loc.local_idx = 0; }
         } else {
              loc.global_idx = results[i].worst_match_genome_pos; strcpy(loc.chrom_name, "N/A"); loc.local_idx = 0;
         }
 
-        fprintf(fp, "%zu,%u,%s,%zu,%zu,%s,%s,%s,%.2f,%d/%d,%.4f,%.4f,%.4f,%s,%zu,%s,%zu\n", 
+        fprintf(fp, "%zu,%u,%s,%zu,%zu,%s,%s,%s,%.2f,%d/%d,%.4f,%.4f,%.4f,%s,%zu,%s,%zu(%c)\n", 
                 i+1, results[i].original_id,
                 t_chrom, t_start, t_end, t_strand,
                 results[i].kmer_seq, results[i].visualized_seq,
                 results[i].gc_content, diff_cnt, k, results[i].mean_uniqueness, 
                 results[i].rms_score, results[i].min_uniqueness,
                 results[i].worst_match_seq, 
-                loc.global_idx, loc.chrom_name, loc.local_idx);
+                loc.global_idx, loc.chrom_name, loc.local_idx, worst_strand);
     }
     fclose(fp);
     free(results);
@@ -280,7 +285,6 @@ void save_full_text_report(KmerTask *tasks, size_t num_tasks, int k, const char 
     fprintf(fp, "  FULL GENOME UNIQUENESS REPORT\n");
     fprintf(fp, "  Sort Metric: %d | K-mer: %d | Total K-mers: %zu\n", metric, k, num_tasks);
     
-    // INFO PRO TARGET
     if (target_info.found) {
         fprintf(fp, "  TARGET: Found in %s (%s Strand)\n", target_info.chrom_name, target_info.strand);
         fprintf(fp, "  REGION: %zu - %zu (Local)\n", target_info.local_start, target_info.local_end);
@@ -294,12 +298,19 @@ void save_full_text_report(KmerTask *tasks, size_t num_tasks, int k, const char 
     for (size_t i = 0; i < num_tasks; i++) {
         KmerTask *t = &tasks[results[i].original_id];
         
-        // Розрахунок координат
         char t_loc_str[128] = "N/A";
         if (target_info.found) {
-            size_t t_start = target_info.local_start + t->id;
-            size_t t_end = t_start + k - 1;
-            snprintf(t_loc_str, sizeof(t_loc_str), "%s:%zu-%zu", target_info.chrom_name, t_start, t_end);
+            size_t t_start = 0;
+            size_t t_end = 0;
+            char t_strand_char = (strcmp(target_info.strand, "MINUS") == 0) ? '-' : '+';
+            if (t_strand_char == '-') {
+                t_start = target_info.local_end - t->id - k + 1;
+                t_end   = target_info.local_end - t->id;
+            } else {
+                t_start = target_info.local_start + t->id;
+                t_end   = t_start + k - 1;
+            }
+            snprintf(t_loc_str, sizeof(t_loc_str), "%s:%zu-%zu(%c)", target_info.chrom_name, t_start, t_end, t_strand_char);
         }
 
         fprintf(fp, "№%zu | ID: %u | Seq: %s | Target: %s\n", i+1, t->id, results[i].kmer_seq, t_loc_str);
@@ -341,7 +352,9 @@ void save_full_text_report(KmerTask *tasks, size_t num_tasks, int k, const char 
             snprintf(score_str, sizeof(score_str), "%d/%d (%.1f%%)", match_cnt, k, sorted_overlaps[j].similarity_score);
             snprintf(range_clean, sizeof(range_clean), "%u-%u", clean_start, clean_end);
             snprintf(range_global, sizeof(range_global), "%zu-%zu", global_start, global_end);
-            snprintf(range_local, sizeof(range_local), "%s:%zu-%zu", loc.chrom_name, local_start, local_end);
+            
+            char m_strand = sorted_overlaps[j].is_minus_strand ? '-' : '+';
+            snprintf(range_local, sizeof(range_local), "%s:%zu-%zu(%c)", loc.chrom_name, local_start, local_end, m_strand);
 
             fprintf(fp, "   %-5d %-24s %-16s %-18s %-20s %s\n",
                     j+1, seq_buf, score_str, range_clean, range_global, range_local);
@@ -354,7 +367,7 @@ void save_full_text_report(KmerTask *tasks, size_t num_tasks, int k, const char 
     printf("   -> Text report saved.\n");
 }
 
-// --- 3. BINARY EXPORT (MACHINE READABLE) ---
+// --- 3. BINARY EXPORT ---
 
 typedef struct {
     char magic[6];      
@@ -362,7 +375,6 @@ typedef struct {
     uint64_t num_tasks;
     uint32_t max_matches; 
     
-    // Target Info Header
     int target_found;
     char target_chrom[64];
     char target_strand[8];
@@ -380,7 +392,6 @@ typedef struct {
     double gc;
     uint32_t match_count; 
     
-    // K-mer specific target coords
     uint64_t kmer_target_start;
     uint64_t kmer_target_end;
 } BinaryKmerHeader;
@@ -395,6 +406,7 @@ typedef struct {
     char chrom_name[64];
     uint64_t local_start;
     uint64_t local_end;
+    char strand; // '+' або '-'
 } BinaryMatchRecord;
 
 void save_binary_export(KmerTask *tasks, size_t num_tasks, int k, const char *filename, RankingMetric metric, GenomeMap *map, TargetHitInfo target_info) {
@@ -445,8 +457,13 @@ void save_binary_export(KmerTask *tasks, size_t num_tasks, int k, const char *fi
         k_header.match_count = (uint32_t)count;
         
         if (target_info.found) {
-            k_header.kmer_target_start = target_info.local_start + t->id;
-            k_header.kmer_target_end = k_header.kmer_target_start + k - 1;
+            if (strcmp(target_info.strand, "MINUS") == 0) {
+                k_header.kmer_target_start = target_info.local_end - t->id - k + 1;
+                k_header.kmer_target_end   = target_info.local_end - t->id;
+            } else {
+                k_header.kmer_target_start = target_info.local_start + t->id;
+                k_header.kmer_target_end   = k_header.kmer_target_start + k - 1;
+            }
         }
         
         fwrite(&k_header, sizeof(BinaryKmerHeader), 1, fp);
@@ -461,9 +478,9 @@ void save_binary_export(KmerTask *tasks, size_t num_tasks, int k, const char *fi
             unpack_sequence(sorted_overlaps[j].packed_seq, seq_buf, k);
             strncpy(match_rec.sequence, seq_buf, 63);
             match_rec.similarity = sorted_overlaps[j].similarity_score;
-            
             match_rec.clean_start = sorted_overlaps[j].position_in_genome;
             match_rec.clean_end   = match_rec.clean_start + k - 1;
+            match_rec.strand = sorted_overlaps[j].is_minus_strand ? '-' : '+'; // <--- ДОДАНО
             
             GenomicLocation loc;
             if (map) {
