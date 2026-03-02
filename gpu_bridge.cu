@@ -26,7 +26,8 @@ __device__ inline uint8_t get_genome_base(const packed_unit_t *data, size_t inde
 }
 
 // Функція вставки зі збереженням сортування (від найбільшого до найменшого)
-__device__ void insert_sorted(KmerTask *task, uint32_t position, float score, const uint64_t *packed_seq) {
+// ДОДАНО: параметр uint8_t is_minus
+__device__ void insert_sorted(KmerTask *task, uint32_t position, float score, const uint64_t *packed_seq, uint8_t is_minus) {
     const int MAX_STORE = MAX_TOP_RESULTS; 
     int count = task->worst_score_idx; 
     
@@ -58,6 +59,7 @@ __device__ void insert_sorted(KmerTask *task, uint32_t position, float score, co
     task->top_results[insert_pos].position_in_genome = position;
     task->top_results[insert_pos].packed_seq[0] = packed_seq[0];
     task->top_results[insert_pos].packed_seq[1] = packed_seq[1];
+    task->top_results[insert_pos].is_minus_strand = is_minus; // <--- ДОДАНО: Зберігаємо ланцюг
 
     // 4. Оновлення лічильника
     if (count < MAX_STORE) {
@@ -74,7 +76,7 @@ __global__ void kmer_scan_kernel(
     size_t num_tasks, 
     int k,
     float filter_threshold,
-    int is_minus_strand // <--- НОВИЙ ПАРАМЕТР
+    int is_minus_strand
 ) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_tasks) return;
@@ -134,8 +136,8 @@ __global__ void kmer_scan_kernel(
         // Якщо це мінус-ланцюг, перераховуємо локальний індекс (i) у глобальний старт на прямому ланцюзі
         uint32_t forward_pos = is_minus_strand ? (uint32_t)(genome_len - i - k) : (uint32_t)i;
 
-        // Вставляємо правильну глобальну позицію
-        insert_sorted(my_task, forward_pos, score, found_packed);
+        // Вставляємо правильну глобальну позицію та ЛАНЦЮГ
+        insert_sorted(my_task, forward_pos, score, found_packed, is_minus_strand); // <--- ОНОВЛЕНО
 
         if (my_task->worst_score_idx >= MAX_TOP_RESULTS) {
              cached_cutoff = my_task->top_results[MAX_TOP_RESULTS - 1].similarity_score;
