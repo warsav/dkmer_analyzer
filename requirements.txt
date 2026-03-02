@@ -1,0 +1,35 @@
+System Requirements
+
+Hardware:
+
+    GPU: NVIDIA GPU (Default Makefile targets Ampere -arch=sm_86; modify for older architectures).
+
+    CPU: Multi-core processor.
+
+    RAM: Sufficient capacity to load the complete reference genome into memory.
+
+Software Environment:
+
+    OS: Linux (POSIX-compliant).
+
+    Compilers: GCC (C11 standard support) and NVCC (CUDA Toolkit).
+
+    Build Tool: GNU Make.
+
+Dependencies:
+No external third-party packages required. The tool links directly against standard system and CUDA libraries:
+
+    libpthread
+
+    libm
+
+    libcudart
+
+    libstdc++
+
+Compilation:
+
+make clean
+make
+
+(Note: Ensure CUDA_PATH in the Makefile matches your system installation, default is /usr/local/cuda)
