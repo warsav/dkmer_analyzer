@@ -21,6 +21,7 @@ typedef struct {
     uint32_t position_in_genome; 
     float similarity_score;      
     uint64_t packed_seq[2]; 
+    uint8_t is_minus_strand;     // <--- ДОДАНО: Зберігає напрямок (1 = мінус, 0 = плюс)
 } OverlapResult;
 
 typedef struct {
